@@ -28,6 +28,41 @@
             }
           ]
         }
+      ],
+      "remainder": {
+        "quantity": 0.32,
+        "unit": "m",
+        "updatedAt": "2026-06-14T09:00:00.000Z"
+      },
+      "remainderHistory": [
+        {
+          "at": "2026-06-14T09:00:00.000Z",
+          "quantity": 0.32,
+          "unit": "m",
+          "reason": "母样登记余料"
+        }
+      ],
+      "conflictLog": [],
+      "splits": [
+        {
+          "id": "SP-001-1",
+          "depthFrom": 128.42,
+          "depthTo": 128.46,
+          "quantity": 0.04,
+          "unit": "m",
+          "purpose": "外送光片鉴定",
+          "createdAt": "2026-06-14T09:20:00.000Z",
+          "status": "在库",
+          "frozen": false,
+          "conflicts": [],
+          "balanceAfter": 0.28,
+          "dispatch": null,
+          "remainderSnapshot": null,
+          "archivedReceipt": null,
+          "receipts": [],
+          "affected": false,
+          "affectedByCorrections": []
+        }
       ]
     }
   ]

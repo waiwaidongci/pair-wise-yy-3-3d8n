@@ -1,45 +1,29 @@
 import http from "node:http";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { loadDb, saveDb, transaction } from "./store.js";
+import {
+  LedgerError,
+  ensureLedger,
+  registerRemainder,
+  addSplit,
+  updateSplit,
+  dispatchSplit,
+  addReceipt
+} from "./ledger.js";
+import { ledgerPage } from "./ledger-page.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const dbPath = join(__dirname, "data", "core-slices.json");
 const port = Number(process.env.PORT || 3025);
 const statuses = ["待切割", "制片中", "待观察", "已交付"];
 const taskSteps = ["取样", "切割", "研磨", "染色", "观察"];
 
-const seed = {
-  samples: [
-    {
-      id: "CORE-001",
-      project: "东岭铜矿薄片",
-      borehole: "ZK-17",
-      coreBox: "BX-09",
-      depth: "128.4-128.8m",
-      owner: "陆川",
-      status: "制片中",
-      delivery: "未交付",
-      slices: [
-        { id: "SL-001-A", method: "茜素红染色", observation: "", status: "研磨", logs: [{ at: "2026-06-12T10:00:00.000Z", step: "取样", note: "截取含矿化条带位置" }, { at: "2026-06-13T11:20:00.000Z", step: "切割", note: "完成粗切" }] }
-      ]
-    }
-  ]
-};
-
-async function loadDb() {
-  if (!existsSync(dbPath)) {
-    await mkdir(dirname(dbPath), { recursive: true });
-    await writeFile(dbPath, JSON.stringify(seed, null, 2));
-  }
-  return JSON.parse(await readFile(dbPath, "utf8"));
-}
-async function saveDb(db) { await writeFile(dbPath, JSON.stringify(db, null, 2)); }
 async function body(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
-  return chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+  if (!chunks.length) return {};
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new LedgerError(400, "invalid_json", "请求体不是合法 JSON");
+  }
 }
 function sendJson(res, status, data) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
@@ -47,8 +31,8 @@ function sendJson(res, status, data) {
 }
 function updateSampleStatus(sample) {
   const sliceStatuses = sample.slices.map(slice => slice.status);
-  if (sliceStatuses.length && sliceStatuses.every(step => step === "观察")) sample.status = "待观察";
   if (sample.delivery === "已交付") sample.status = "已交付";
+  else if (sliceStatuses.length && sliceStatuses.every(step => step === "观察")) sample.status = "待观察";
   else if (sliceStatuses.some(step => ["取样", "切割", "研磨", "染色"].includes(step))) sample.status = "制片中";
   else sample.status = "待切割";
 }
@@ -75,7 +59,7 @@ const page = `<!doctype html>
   </style>
 </head>
 <body>
-  <header><div><h1>岩芯样本切片实验室</h1><div class="meta">样本、切片任务、制片步骤和交付</div></div><button id="reload">刷新</button></header>
+  <header><div><h1>岩芯样本切片实验室</h1><div class="meta">样本、切片任务、制片步骤和交付</div></div><div><a href="/ledger" style="margin-right:14px">分样与外送台账 →</a><button id="reload">刷新</button></div></header>
   <main>
     <form id="form">
       <h2>创建岩芯样本</h2>
@@ -141,55 +125,120 @@ const page = `<!doctype html>
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
-    const db = await loadDb();
+
+    // 页面
     if (req.method === "GET" && url.pathname === "/") {
-      res.writeHead(200, { "Content-Type":"text/html; charset=utf-8" });
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       return res.end(page);
     }
-    if (req.method === "GET" && url.pathname === "/api/samples") return sendJson(res, 200, db.samples);
+    if (req.method === "GET" && url.pathname === "/ledger") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      return res.end(ledgerPage);
+    }
+
+    // ---- 既有切片接口 ----
+    if (req.method === "GET" && url.pathname === "/api/samples") {
+      const db = await loadDb();
+      return sendJson(res, 200, db.samples);
+    }
     if (req.method === "POST" && url.pathname === "/api/samples") {
       const input = await body(req);
-      const sample = { id: `CORE-${Date.now()}`, project: input.project, borehole: input.borehole, coreBox: input.coreBox, depth: input.depth, owner: input.owner, status: "待切割", delivery: "未交付", slices: [{ id: input.sliceId, method: input.method, observation: "", status: "取样", logs: [{ at: new Date().toISOString(), step: "取样", note: "创建初始切片任务" }] }] };
-      updateSampleStatus(sample);
-      db.samples.unshift(sample);
-      await saveDb(db);
+      const sample = await transaction(db => {
+        const sample = {
+          id: `CORE-${Date.now()}`, project: input.project, borehole: input.borehole, coreBox: input.coreBox,
+          depth: input.depth, owner: input.owner, status: "待切割", delivery: "未交付",
+          slices: [{ id: input.sliceId, method: input.method, observation: "", status: "取样", logs: [{ at: new Date().toISOString(), step: "取样", note: "创建初始切片任务" }] }]
+        };
+        ensureLedger(sample);
+        db.samples.unshift(sample);
+        updateSampleStatus(sample);
+        return sample;
+      });
       return sendJson(res, 201, sample);
     }
     const addSlice = url.pathname.match(/^\/api\/samples\/([^/]+)\/slices$/);
     if (addSlice && req.method === "POST") {
-      const sample = db.samples.find(item => item.id === addSlice[1]);
-      if (!sample) return sendJson(res, 404, { error: "sample_not_found" });
       const input = await body(req);
-      sample.slices.push({ id: input.id, method: input.method || "未指定", observation: "", status: "取样", logs: [{ at: new Date().toISOString(), step: "取样", note: "新增切片任务" }] });
-      updateSampleStatus(sample);
-      await saveDb(db);
+      const sample = await transaction(db => {
+        const sample = db.samples.find(item => item.id === addSlice[1]);
+        if (!sample) throw new LedgerError(404, "sample_not_found");
+        sample.slices.push({ id: input.id, method: input.method || "未指定", observation: "", status: "取样", logs: [{ at: new Date().toISOString(), step: "取样", note: "新增切片任务" }] });
+        updateSampleStatus(sample);
+        return sample;
+      });
       return sendJson(res, 201, sample);
     }
     const logMatch = url.pathname.match(/^\/api\/samples\/([^/]+)\/slices\/([^/]+)\/logs$/);
     if (logMatch && req.method === "POST") {
-      const sample = db.samples.find(item => item.id === logMatch[1]);
-      if (!sample) return sendJson(res, 404, { error: "sample_not_found" });
-      const slice = sample.slices.find(item => item.id === logMatch[2]);
-      if (!slice) return sendJson(res, 404, { error: "slice_not_found" });
       const input = await body(req);
-      slice.status = input.step;
-      if (input.step === "观察") slice.observation = input.note || slice.observation;
-      slice.logs.push({ at: new Date().toISOString(), step: input.step, note: input.note || "" });
-      updateSampleStatus(sample);
-      await saveDb(db);
+      const sample = await transaction(db => {
+        const sample = db.samples.find(item => item.id === logMatch[1]);
+        if (!sample) throw new LedgerError(404, "sample_not_found");
+        const slice = sample.slices.find(item => item.id === logMatch[2]);
+        if (!slice) throw new LedgerError(404, "slice_not_found");
+        slice.status = input.step;
+        if (input.step === "观察") slice.observation = input.note || slice.observation;
+        slice.logs.push({ at: new Date().toISOString(), step: input.step, note: input.note || "" });
+        updateSampleStatus(sample);
+        return sample;
+      });
       return sendJson(res, 200, sample);
     }
     const deliverMatch = url.pathname.match(/^\/api\/samples\/([^/]+)\/deliver$/);
     if (deliverMatch && req.method === "POST") {
-      const sample = db.samples.find(item => item.id === deliverMatch[1]);
-      if (!sample) return sendJson(res, 404, { error: "sample_not_found" });
-      sample.delivery = "已交付";
-      updateSampleStatus(sample);
-      await saveDb(db);
+      const sample = await transaction(db => {
+        const sample = db.samples.find(item => item.id === deliverMatch[1]);
+        if (!sample) throw new LedgerError(404, "sample_not_found");
+        sample.delivery = "已交付";
+        updateSampleStatus(sample);
+        return sample;
+      });
       return sendJson(res, 200, sample);
     }
+
+    // ---- 分样与外送台账接口 ----
+    if (req.method === "GET" && url.pathname === "/api/ledger/samples") {
+      const db = await loadDb();
+      db.samples.forEach(ensureLedger);
+      return sendJson(res, 200, db.samples);
+    }
+
+    const remainderMatch = url.pathname.match(/^\/api\/ledger\/samples\/([^/]+)\/remainder$/);
+    if (remainderMatch && req.method === "POST") {
+      const input = await body(req);
+      const result = await transaction(db => registerRemainder(db, decodeURIComponent(remainderMatch[1]), input));
+      return sendJson(res, 200, { sample: result.sample, recalculated: result.recalculated, affected: result.affected });
+    }
+
+    // 注意：需在分样 CRUD 之前匹配 /splits/:id/... 子路由
+    const splitReceipt = url.pathname.match(/^\/api\/ledger\/samples\/([^/]+)\/splits\/([^/]+)\/receipts$/);
+    if (splitReceipt && req.method === "POST") {
+      const input = await body(req);
+      const result = await transaction(db => addReceipt(db, decodeURIComponent(splitReceipt[1]), decodeURIComponent(splitReceipt[2]), input));
+      return sendJson(res, 201, { split: result.split, receipt: result.receipt });
+    }
+    const splitDispatch = url.pathname.match(/^\/api\/ledger\/samples\/([^/]+)\/splits\/([^/]+)\/dispatch$/);
+    if (splitDispatch && req.method === "POST") {
+      const input = await body(req);
+      const split = await transaction(db => dispatchSplit(db, decodeURIComponent(splitDispatch[1]), decodeURIComponent(splitDispatch[2]), input));
+      return sendJson(res, 200, split);
+    }
+    const splitsMatch = url.pathname.match(/^\/api\/ledger\/samples\/([^/]+)\/splits$/);
+    if (splitsMatch && req.method === "POST") {
+      const input = await body(req);
+      const split = await transaction(db => addSplit(db, decodeURIComponent(splitsMatch[1]), input));
+      return sendJson(res, 201, split);
+    }
+    const splitMatch = url.pathname.match(/^\/api\/ledger\/samples\/([^/]+)\/splits\/([^/]+)$/);
+    if (splitMatch && req.method === "PATCH") {
+      const input = await body(req);
+      const split = await transaction(db => updateSplit(db, decodeURIComponent(splitMatch[1]), decodeURIComponent(splitMatch[2]), input));
+      return sendJson(res, 200, split);
+    }
+
     sendJson(res, 404, { error: "not_found" });
   } catch (error) {
+    if (error instanceof LedgerError) return sendJson(res, error.status, { error: error.code, message: error.message });
     sendJson(res, 500, { error: error.message });
   }
 });
