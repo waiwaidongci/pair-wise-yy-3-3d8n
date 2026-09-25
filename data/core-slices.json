@@ -9,6 +9,13 @@
       "owner": "陆川",
       "status": "制片中",
       "delivery": "未交付",
+      "remainder": {
+        "total": 0.6,
+        "unit": "m",
+        "note": "余芯段，箱内第 3 排",
+        "registeredAt": "2026-09-01T08:00:00.000Z"
+      },
+      "correctionHistory": [],
       "slices": [
         {
           "id": "SL-001-A",
@@ -28,7 +35,101 @@
             }
           ]
         }
+      ],
+      "splits": [
+        {
+          "uid": "SP-seed-001-1",
+          "id": "FY-001-1",
+          "interval": {
+            "from": 128.4,
+            "to": 128.55
+          },
+          "depth": "128.4-128.55m",
+          "quantity": 0.15,
+          "unit": "m",
+          "purpose": "外送：铜品位、硫含量分析",
+          "status": "已外送",
+          "frozen": true,
+          "shippedAt": "2026-09-10T03:00:00.000Z",
+          "receipt": {
+            "items": [
+              "铜品位",
+              "硫含量"
+            ],
+            "conclusion": "Cu 1.42%，矿化连续，建议加深控制",
+            "testedAt": "2026-09-14",
+            "receivedAt": "2026-09-15T06:30:00.000Z",
+            "archived": true,
+            "archivedAt": "2026-09-15T06:30:00.000Z"
+          },
+          "conclusion": "Cu 1.42%，矿化连续，建议加深控制",
+          "lateReceipts": [],
+          "conflicts": [],
+          "conflictHistory": [
+            {
+              "at": "2026-09-02T08:00:00.000Z",
+              "reason": "分样登记核验",
+              "from": [],
+              "to": []
+            }
+          ],
+          "conflictNote": "登记时核验通过",
+          "needsAttention": false,
+          "affectedByCorrection": false,
+          "createdAt": "2026-09-02T08:00:00.000Z"
+        },
+        {
+          "uid": "SP-seed-001-2",
+          "id": "FY-001-2",
+          "interval": {
+            "from": 128.5,
+            "to": 128.7
+          },
+          "depth": "128.5-128.7m",
+          "quantity": 0.6,
+          "unit": "m",
+          "purpose": "内部薄片鉴定",
+          "status": "未外送",
+          "frozen": false,
+          "shippedAt": null,
+          "receipt": null,
+          "conclusion": "",
+          "lateReceipts": [],
+          "conflicts": [
+            "interval_overlap",
+            "exceeds_remainder"
+          ],
+          "conflictHistory": [
+            {
+              "at": "2026-09-03T08:00:00.000Z",
+              "reason": "分样登记核验",
+              "from": [],
+              "to": [
+                "interval_overlap",
+                "exceeds_remainder"
+              ]
+            }
+          ],
+          "conflictNote": "登记时检出冲突：区间重叠、超出余料；原记录已保留",
+          "needsAttention": true,
+          "affectedByCorrection": false,
+          "createdAt": "2026-09-03T08:00:00.000Z"
+        }
       ]
+    },
+    {
+      "id": "CORE-002",
+      "project": "北坡金矿化探",
+      "borehole": "ZK-03",
+      "coreBox": "BX-02",
+      "depth": "45.1-46.0m",
+      "owner": "沈舟",
+      "status": "待切割",
+      "delivery": "未交付",
+      "remainder": null,
+      "correctionHistory": [],
+      "slices": [],
+      "splits": []
     }
   ]
 }
